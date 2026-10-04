@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Market New Tab",
+  "version": "0.1.0",
+  "description": "Acompanhe seus ativos financeiros na nova guia.",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://services.bingapis.com/*",
+    "https://assets.msn.com/*"
+  ],
+  "chrome_url_overrides": {
+    "newtab": "index.html"
+  }
+}

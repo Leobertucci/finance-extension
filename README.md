@@ -1,21 +1,45 @@
-# Finance Extension
+# Market New Tab
 
-Protótipo local da página de nova guia da extensão Finance para Microsoft Edge.
-Por enquanto, a página mostra o gráfico intradiário do BDR ROXO34 (Nu Holdings)
-usando os serviços de busca e cotações do MSN Finance.
+Extensão local para Microsoft Edge que mostra gráficos intradiários dos ativos
+escolhidos. É possível adicionar um ativo usando seu símbolo (por exemplo,
+`ROXO34`) ou informar diretamente o ID usado pelo MSN Finance (por exemplo,
+`calgcw`).
 
-## Rodar localmente
+## Desenvolvimento com Next.js
 
-Instale as dependências e inicie o servidor de desenvolvimento:
+O Next.js funciona como preview web. Nesse modo, o catálogo é salvo no
+`localStorage` do navegador e os Route Handlers do Next consultam o MSN:
 
 ```bash
 npm install
 npm run dev
 ```
 
-Abra [http://localhost:3000](http://localhost:3000). A página busca o código
-do ativo pelo ticker `ROXO34`, consulta os preços intradiários e permite
-atualizar os dados manualmente.
+Abra [http://localhost:3000](http://localhost:3000).
 
-As chamadas ao MSN são feitas no servidor pela rota `/api/stocks/roxo34`; a
-chave usada pela chamada de gráficos não é enviada ao navegador.
+## Gerar e carregar a extensão no Edge
+
+Gere o pacote local da extensão:
+
+```bash
+npm run build:extension
+```
+
+No Edge, abra `edge://extensions`, habilite o **Modo de desenvolvedor**, clique
+em **Carregar sem pacote** e selecione a pasta `dist` deste projeto. A nova guia
+passa a ser fornecida pela extensão, e o catálogo fica salvo em
+`chrome.storage.local`, sendo recuperado quando o Edge abre novas guias.
+
+Para desenvolver a interface servida pelo Vite:
+
+```bash
+npm run dev:extension
+```
+
+O servidor Vite é apenas um preview web; para testar o armazenamento da
+extensão, carregue a pasta `dist` no Edge.
+
+O pacote solicita acesso de armazenamento e aos hosts de autosuggest e gráficos
+do MSN Finance. A chave de gráficos fornecida pelo MSN faz parte do código
+distribuído da extensão e, como em qualquer extensão cliente, pode ser vista no
+pacote local.
