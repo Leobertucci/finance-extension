@@ -6,10 +6,14 @@ import { loadStockCatalog, saveStockCatalog } from "@/lib/stock-catalog";
 import type {
   DragEvent,
   FormEvent,
+  KeyboardEvent,
+  MouseEvent,
 } from "react";
 import type {
+  StockCatalog,
   StockCatalogEntry,
   StockChartData,
+  StockSection,
 } from "@/lib/stock-types";
 
 const currency = new Intl.NumberFormat("pt-BR", {
@@ -55,21 +59,24 @@ function PriceChart({
   const chartPoints = data.prices.filter(
     (_, index) => index % 2 === 0 || index === data.prices.length - 1,
   );
-  const values = chartPoints.map((point) => point.price);
-  const minimum = Math.min(...values, baseline);
-  const maximum = Math.max(...values, baseline);
+  const hasPreviousClose = data.previousClose !== null;
+  const plottedPrices = [
+    ...(data.previousClose !== null ? [data.previousClose] : []),
+    ...chartPoints.map((point) => point.price),
+  ];
+  const minimum = Math.min(...plottedPrices, baseline);
+  const maximum = Math.max(...plottedPrices, baseline);
   const padding = (maximum - minimum) * 0.16 || maximum * 0.01;
   const lowerBound = minimum - padding;
   const upperBound = maximum + padding;
   const baselineY =
     top + ((upperBound - baseline) / (upperBound - lowerBound)) * (bottom - top);
   const trendColor = isPositive ? "#13865e" : "#cf4756";
-  const coordinates = chartPoints.map((point, index) => ({
-    x: left + (index / (chartPoints.length - 1)) * (right - left),
+  const coordinates = plottedPrices.map((price, index) => ({
+    x: left + (index / (plottedPrices.length - 1)) * (right - left),
     y:
       top +
-      ((upperBound - point.price) / (upperBound - lowerBound)) *
-        (bottom - top),
+      ((upperBound - price) / (upperBound - lowerBound)) * (bottom - top),
   }));
   const linePath = coordinates
     .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
@@ -81,7 +88,7 @@ function PriceChart({
       (markerIndex / 3) * (chartPoints.length - 1),
     );
     return {
-      x: coordinates[pointIndex].x,
+      x: coordinates[pointIndex + (hasPreviousClose ? 1 : 0)].x,
       label: timeLabel.format(
         new Date(chartPoints[pointIndex].timestamp),
       ),
@@ -94,7 +101,7 @@ function PriceChart({
         className="price-chart"
         viewBox={`0 0 ${width} ${height}`}
         role="img"
-        aria-label={`Gráfico intradiário de ${chartPoints.length} cotações de ${data.symbol}`}
+        aria-label={`Gráfico intradiário${hasPreviousClose ? " iniciado pelo fechamento anterior e" : ""} com ${chartPoints.length} cotações de ${data.symbol}`}
       >
         <defs>
           <linearGradient id={gradientId} x1="0" x2="0" y1="0" y2="1">
@@ -147,16 +154,6 @@ function PriceChart({
             {priceNumber.format(baseline)}
           </text>
         </g>
-        <circle
-          cx={coordinates[coordinates.length - 1].x}
-          cy={coordinates[coordinates.length - 1].y}
-          r="5"
-          className={
-            isPositive
-              ? "chart-current-point positive"
-              : "chart-current-point negative"
-          }
-        />
 
         {timeMarkers.map((marker, index) => (
           <text
@@ -202,6 +199,19 @@ function StockCard({
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const controller = useRef<AbortController | null>(null);
+  const cardRef = useRef<HTMLElement>(null);
+
+  function handleCardMouseDown(event: MouseEvent<HTMLElement>) {
+    if (!cardRef.current) return;
+    cardRef.current.draggable = !(
+      event.target instanceof Element &&
+      event.target.closest(".stock-header h2, .quote-value")
+    );
+  }
+
+  function restoreCardDragging() {
+    if (cardRef.current) cardRef.current.draggable = draggable;
+  }
 
   async function loadData() {
     controller.current?.abort();
@@ -246,14 +256,21 @@ function StockCard({
 
   return (
     <section
+      ref={cardRef}
+      data-msn-id={entry.msnId}
       className={`stock-card${isDragOver ? " drag-over" : ""}`}
       aria-labelledby={`stock-title-${entry.msnId}`}
       aria-busy={isLoading}
       draggable={draggable}
+      onMouseDown={handleCardMouseDown}
+      onMouseUp={restoreCardDragging}
       onDragStart={onDragStart}
       onDragOver={onDragOver}
       onDrop={onDrop}
-      onDragEnd={onDragEnd}
+      onDragEnd={() => {
+        restoreCardDragging();
+        onDragEnd();
+      }}
     >
       <div className="stock-header">
         <h2 id={`stock-title-${entry.msnId}`}>
@@ -320,6 +337,119 @@ function StockCard({
         </a>
       )}
     </section>
+  );
+}
+
+function SectionHeading({
+  section,
+  initiallyEditing,
+  canDelete,
+  onRename,
+  onFinishEditing,
+  onAddAsset,
+  onDelete,
+}: {
+  section: StockSection;
+  initiallyEditing: boolean;
+  canDelete: boolean;
+  onRename: (sectionId: string, name: string) => void;
+  onFinishEditing: () => void;
+  onAddAsset: (sectionId: string) => void;
+  onDelete: (sectionId: string) => void;
+}) {
+  const [isEditing, setIsEditing] = useState(initiallyEditing);
+  const [name, setName] = useState(section.name);
+  const skipNextBlur = useRef(false);
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const normalizedName = name.trim();
+    skipNextBlur.current = true;
+    if (normalizedName) onRename(section.id, normalizedName);
+    else setName(section.name);
+    setIsEditing(false);
+    onFinishEditing();
+  }
+
+  function blurInput() {
+    if (skipNextBlur.current) {
+      skipNextBlur.current = false;
+      return;
+    }
+
+    const normalizedName = name.trim();
+    if (normalizedName) onRename(section.id, normalizedName);
+    else setName(section.name);
+    setIsEditing(false);
+    onFinishEditing();
+  }
+
+  function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Escape") {
+      skipNextBlur.current = true;
+      setName(section.name);
+      setIsEditing(false);
+      onFinishEditing();
+    }
+  }
+
+  if (isEditing) {
+    return (
+      <form className="section-rename-form" onSubmit={submit}>
+        <input
+          aria-label="Nome da seção"
+          autoFocus
+          maxLength={40}
+          value={name}
+          onFocus={(event) => event.currentTarget.select()}
+          onChange={(event) => setName(event.target.value)}
+          onBlur={blurInput}
+          onKeyDown={handleKeyDown}
+        />
+      </form>
+    );
+  }
+
+  return (
+    <div className="section-heading">
+      <h2>
+        <button
+          className="section-title"
+          type="button"
+          onClick={() => {
+            setName(section.name);
+            setIsEditing(true);
+          }}
+          aria-label={`Alterar nome da seção ${section.name}`}
+          title="Clique para alterar o nome"
+        >
+          {section.name}
+        </button>
+      </h2>
+      <button
+        className="section-action"
+        type="button"
+        onClick={() => onAddAsset(section.id)}
+        aria-label={`Adicionar ativo`}
+        title={`Adicionar ativo`}
+      >
+        +
+      </button>
+      <button
+        className="section-action section-delete"
+        type="button"
+        onClick={() => onDelete(section.id)}
+        aria-label={`Excluir seção ${section.name} e seus ativos`}
+        title={
+          canDelete
+            ? `Excluir seção ${section.name} e seus ativos`
+            : "É necessário manter pelo menos uma seção"
+        }
+        disabled={!canDelete}
+      >
+        ×
+      </button>
+    </div>
   );
 }
 
@@ -391,6 +521,7 @@ function AddAssetDialog({
           <input
             id="asset-identifier"
             className="asset-input"
+            autoFocus
             value={value}
             onChange={(event) => setValue(event.target.value)}
             placeholder={mode === "symbol" ? "Ex.: BOVA11" : "Ex.: bgmb3m"}
@@ -424,10 +555,19 @@ function AddAssetDialog({
 }
 
 export default function StockChart() {
-  const [catalog, setCatalog] = useState<StockCatalogEntry[] | null>(null);
+  const [catalog, setCatalog] = useState<StockCatalog | null>(null);
   const [dragOverMsnId, setDragOverMsnId] = useState<string | null>(null);
+  const [dragOverSectionId, setDragOverSectionId] = useState<string | null>(null);
+  const [isAddSectionDragOver, setIsAddSectionDragOver] = useState(false);
+  const [dropPosition, setDropPosition] = useState<{
+    sectionId: string;
+    index: number;
+    targetMsnId?: string;
+  } | null>(null);
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const [addAssetSectionId, setAddAssetSectionId] = useState<string | null>(null);
+  const [newSectionId, setNewSectionId] = useState<string | null>(null);
   const [isAdding, setIsAdding] = useState(false);
   const [dialogError, setDialogError] = useState<string | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
@@ -462,12 +602,18 @@ export default function StockChart() {
         mode === "symbol"
           ? await resolveMsnId(normalizedValue.toLocaleUpperCase("pt-BR"), new AbortController().signal)
           : normalizedValue;
-      const existing = catalog.some(
+      const existing = catalog.entries.some(
         (entry) => entry.msnId.toLocaleLowerCase() === msnId.toLocaleLowerCase(),
       );
 
       if (existing) {
         throw new Error("Esse ativo já está no seu catálogo.");
+      }
+
+      const targetSectionId =
+        addAssetSectionId ?? catalog.sections[0]?.id;
+      if (!targetSectionId) {
+        throw new Error("Crie uma seção antes de adicionar um ativo.");
       }
 
       const entry = {
@@ -476,11 +622,16 @@ export default function StockChart() {
             ? normalizedValue.toLocaleUpperCase("pt-BR")
             : normalizedValue,
         msnId,
+        sectionId: targetSectionId,
       };
-      const nextCatalog = [...catalog, entry];
+      const nextCatalog = {
+        ...catalog,
+        entries: [...catalog.entries, entry],
+      };
       await saveStockCatalog(nextCatalog);
       setCatalog(nextCatalog);
       setIsAddOpen(false);
+      setAddAssetSectionId(null);
     } catch (error) {
       setDialogError(getErrorMessage(error));
     } finally {
@@ -491,7 +642,10 @@ export default function StockChart() {
   async function removeAsset(msnId: string) {
     if (!catalog) return;
 
-    const nextCatalog = catalog.filter((entry) => entry.msnId !== msnId);
+    const nextCatalog = {
+      ...catalog,
+      entries: catalog.entries.filter((entry) => entry.msnId !== msnId),
+    };
 
     try {
       await saveStockCatalog(nextCatalog);
@@ -512,24 +666,171 @@ export default function StockChart() {
     event.preventDefault();
     event.dataTransfer.dropEffect = "move";
     setDragOverMsnId(msnId);
+    setDragOverSectionId(null);
   }
 
-  async function dropAsset(event: DragEvent<HTMLElement>, targetMsnId: string) {
+  function allowSectionDrop(
+    event: DragEvent<HTMLElement>,
+    sectionId: string,
+  ) {
+    if (!catalog) return;
+
     event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
     setDragOverMsnId(null);
+
+    const sectionEntries = catalog.entries.filter(
+      (entry) => entry.sectionId === sectionId,
+    );
+    if (sectionEntries.length === 0) {
+      setDragOverSectionId(sectionId);
+      setDropPosition({ sectionId, index: 0 });
+      return;
+    }
+
+    setDragOverSectionId(null);
+    setDropPosition({ sectionId, index: sectionEntries.length });
+  }
+
+  function allowGridDrop(
+    event: DragEvent<HTMLDivElement>,
+    sectionId: string,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = "move";
+    setDragOverSectionId(null);
+    if (!catalog) return;
+
+    const cards = Array.from(
+      event.currentTarget.querySelectorAll<HTMLElement>(".stock-card"),
+    );
+    const targetCard =
+      event.target instanceof Element
+        ? event.target.closest<HTMLElement>(".stock-card")
+        : null;
+    const targetIndex = targetCard ? cards.indexOf(targetCard) : -1;
+
+    if (targetIndex >= 0) {
+      const targetMsnId = catalog.entries.find(
+        (entry) =>
+          entry.sectionId === sectionId &&
+          entry.msnId === targetCard?.dataset.msnId,
+      )?.msnId;
+      setDragOverMsnId(targetMsnId ?? null);
+      setDropPosition({ sectionId, index: targetIndex, targetMsnId });
+      return;
+    }
+
+    setDragOverMsnId(null);
+    if (cards.length === 0) {
+      setDragOverSectionId(sectionId);
+      setDropPosition({ sectionId, index: 0 });
+      return;
+    }
+
+    const pointerX = event.clientX;
+    const pointerY = event.clientY;
+    const cuts = cards.map((card, index) => {
+      const rect = card.getBoundingClientRect();
+      return {
+        index,
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2,
+      };
+    });
+    let insertionIndex = 0;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+
+    for (let index = 0; index <= cuts.length; index += 1) {
+      const previous = cuts[index - 1];
+      const next = cuts[index];
+      const boundary = previous && next
+        ? { x: (previous.x + next.x) / 2, y: (previous.y + next.y) / 2 }
+        : previous ?? next;
+      if (!boundary) continue;
+
+      const distance = Math.hypot(pointerX - boundary.x, pointerY - boundary.y);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        insertionIndex = index;
+      }
+    }
+
+    setDropPosition({ sectionId, index: insertionIndex });
+  }
+
+  async function dropAsset(
+    event: DragEvent<HTMLElement>,
+    targetSectionId: string,
+    targetMsnId?: string,
+    targetPosition?: number,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    setDragOverMsnId(null);
+    setDragOverSectionId(null);
+    setDropPosition(null);
 
     const sourceMsnId = draggedMsnId.current;
     draggedMsnId.current = null;
 
     if (!catalog || !sourceMsnId || sourceMsnId === targetMsnId) return;
 
-    const sourceIndex = catalog.findIndex((entry) => entry.msnId === sourceMsnId);
-    const targetIndex = catalog.findIndex((entry) => entry.msnId === targetMsnId);
-    if (sourceIndex < 0 || targetIndex < 0) return;
+    const sourceEntry = catalog.entries.find(
+      (entry) => entry.msnId === sourceMsnId,
+    );
+    if (!sourceEntry) return;
 
-    const nextCatalog = [...catalog];
-    const [movedAsset] = nextCatalog.splice(sourceIndex, 1);
-    nextCatalog.splice(targetIndex, 0, movedAsset);
+    const sourceEntries = catalog.entries.filter(
+      (entry) => entry.sectionId === sourceEntry.sectionId,
+    );
+    const sourceIndex = sourceEntries.findIndex(
+      (entry) => entry.msnId === sourceMsnId,
+    );
+    const targetEntries = catalog.entries.filter(
+      (entry) => entry.sectionId === targetSectionId,
+    );
+    let targetIndex = targetMsnId
+      ? targetEntries.findIndex((entry) => entry.msnId === targetMsnId)
+      : targetPosition ?? targetEntries.length;
+
+    if (targetIndex < 0) return;
+    if (
+      sourceEntry.sectionId === targetSectionId &&
+      sourceEntries[targetIndex]?.msnId === sourceMsnId
+    ) {
+      return;
+    }
+
+    const nextSourceEntries = sourceEntries.filter(
+      (entry) => entry.msnId !== sourceMsnId,
+    );
+    if (
+      !targetMsnId &&
+      sourceEntry.sectionId === targetSectionId &&
+      sourceIndex < targetIndex
+    ) {
+      targetIndex -= 1;
+    }
+    const nextTargetEntries =
+      sourceEntry.sectionId === targetSectionId
+        ? nextSourceEntries
+        : [...targetEntries];
+    nextTargetEntries.splice(targetIndex, 0, {
+      ...sourceEntry,
+      sectionId: targetSectionId,
+    });
+
+    const entries = catalog.sections.flatMap((section) =>
+      section.id === sourceEntry.sectionId && section.id !== targetSectionId
+        ? nextSourceEntries
+        : section.id === targetSectionId
+          ? nextTargetEntries
+          : catalog.entries.filter((entry) => entry.sectionId === section.id),
+    );
+
+    const nextCatalog = { ...catalog, entries };
 
     try {
       await saveStockCatalog(nextCatalog);
@@ -540,8 +841,114 @@ export default function StockChart() {
     }
   }
 
-  function openAddDialog() {
+  async function addSection() {
+    if (!catalog) return;
+
+    const section = {
+      id: crypto.randomUUID(),
+      name: `Seção ${catalog.sections.length + 1}`,
+    };
+    const nextCatalog = {
+      ...catalog,
+      sections: [...catalog.sections, section],
+    };
+
+    try {
+      await saveStockCatalog(nextCatalog);
+      setCatalog(nextCatalog);
+      setNewSectionId(section.id);
+      setCatalogError(null);
+    } catch (error) {
+      setCatalogError(getErrorMessage(error));
+    }
+  }
+
+  async function dropOnAddSection(event: DragEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsAddSectionDragOver(false);
+    setDragOverMsnId(null);
+    setDragOverSectionId(null);
+    setDropPosition(null);
+
+    const sourceMsnId = draggedMsnId.current;
+    draggedMsnId.current = null;
+    if (!catalog || !sourceMsnId) return;
+
+    const section = {
+      id: crypto.randomUUID(),
+      name: `Seção ${catalog.sections.length + 1}`,
+    };
+    const nextCatalog = {
+      sections: [...catalog.sections, section],
+      entries: catalog.entries.map((entry) =>
+        entry.msnId === sourceMsnId
+          ? { ...entry, sectionId: section.id }
+          : entry,
+      ),
+    };
+
+    try {
+      await saveStockCatalog(nextCatalog);
+      setCatalog(nextCatalog);
+      setNewSectionId(section.id);
+      setCatalogError(null);
+    } catch (error) {
+      setCatalogError(getErrorMessage(error));
+    }
+  }
+
+  async function renameSection(sectionId: string, name: string) {
+    if (!catalog) return;
+
+    const nextCatalog = {
+      ...catalog,
+      sections: catalog.sections.map((section) =>
+        section.id === sectionId ? { ...section, name } : section,
+      ),
+    };
+
+    try {
+      await saveStockCatalog(nextCatalog);
+      setCatalog(nextCatalog);
+      setCatalogError(null);
+    } catch (error) {
+      setCatalogError(getErrorMessage(error));
+    }
+  }
+
+  async function deleteSection(sectionId: string) {
+    if (!catalog) return;
+
+    const section = catalog.sections.find((item) => item.id === sectionId);
+    if (!section) return;
+
+    const numero_ativos = catalog.entries.filter((entry) => entry.sectionId === sectionId).length;
+
+    if (numero_ativos > 3) {
+      const shouldDelete = window.confirm(
+        `Excluir "${section.name}" e todos os ativos dessa seção?`,
+      );
+      if (!shouldDelete) return;
+    }
+
+    const nextCatalog = {
+      sections: catalog.sections.filter((item) => item.id !== sectionId),
+      entries: catalog.entries.filter((entry) => entry.sectionId !== sectionId),
+    };
+
+    try {
+      await saveStockCatalog(nextCatalog);
+      setCatalog(nextCatalog);
+      setCatalogError(null);
+    } catch (error) {
+      setCatalogError(getErrorMessage(error));
+    }
+  }
+
+  function openAddDialog(sectionId: string) {
     setDialogError(null);
+    setAddAssetSectionId(sectionId);
     setIsAddOpen(true);
   }
 
@@ -595,32 +1002,84 @@ export default function StockChart() {
         </div>
       )}
 
-      <div className="watchlist-grid">
-        {catalog?.map((entry) => (
-          <StockCard
-            key={entry.msnId}
-            entry={entry}
-            onRemove={(msnId) => void removeAsset(msnId)}
-            draggable
-            onDragStart={(event) => startDragging(event, entry.msnId)}
-            onDragOver={(event) => allowDrop(event, entry.msnId)}
-            onDrop={(event) => void dropAsset(event, entry.msnId)}
-            onDragEnd={() => {
-              draggedMsnId.current = null;
-              setDragOverMsnId(null);
-            }}
-            isDragOver={dragOverMsnId === entry.msnId}
-          />
+      <div className="sections-list">
+        {catalog?.sections.map((section) => (
+          <section
+            className={`asset-section${dragOverSectionId === section.id ? " drag-over" : ""}`}
+            key={section.id}
+            onDragOver={(event) => allowSectionDrop(event, section.id)}
+            onDrop={(event) => void dropAsset(event, section.id)}
+          >
+            <SectionHeading
+              section={section}
+              initiallyEditing={section.id === newSectionId}
+              canDelete
+              onRename={renameSection}
+              onFinishEditing={() => setNewSectionId(null)}
+              onAddAsset={openAddDialog}
+              onDelete={(sectionId) => void deleteSection(sectionId)}
+            />
+            <div
+              className="watchlist-grid"
+              onDragOver={(event) => allowGridDrop(event, section.id)}
+              onDrop={(event) => {
+                const position =
+                  dropPosition?.sectionId === section.id
+                    ? dropPosition
+                    : null;
+                if (position) {
+                  void dropAsset(
+                    event,
+                    section.id,
+                    position.targetMsnId,
+                    position.index,
+                  );
+                } else {
+                  void dropAsset(event, section.id);
+                }
+              }}
+            >
+              {catalog.entries
+                .filter((entry) => entry.sectionId === section.id)
+                .map((entry) => (
+                  <StockCard
+                    key={entry.msnId}
+                    entry={entry}
+                    onRemove={(msnId) => void removeAsset(msnId)}
+                    draggable
+                    onDragStart={(event) => startDragging(event, entry.msnId)}
+                    onDragOver={(event) => allowDrop(event, entry.msnId)}
+                    onDrop={(event) =>
+                      void dropAsset(event, section.id, entry.msnId)
+                    }
+                    onDragEnd={() => {
+                      draggedMsnId.current = null;
+                      setDragOverMsnId(null);
+                      setDragOverSectionId(null);
+                      setDropPosition(null);
+                      setIsAddSectionDragOver(false);
+                    }}
+                    isDragOver={dragOverMsnId === entry.msnId}
+                  />
+                ))}
+            </div>
+          </section>
         ))}
         {catalog !== null && (
           <button
-            className="add-card"
             type="button"
-            onClick={openAddDialog}
-            aria-label="Adicionar cartão de ativo"
+            onClick={() => void addSection()}
+            onDragOver={(event) => {
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "move";
+              setIsAddSectionDragOver(true);
+            }}
+            onDragLeave={() => setIsAddSectionDragOver(false)}
+            onDragEnd={() => setIsAddSectionDragOver(false)}
+            onDrop={dropOnAddSection}
+            className={`add-section${isAddSectionDragOver ? " drag-over" : ""}`}
           >
-            <span className="add-card-icon" aria-hidden="true">+</span>
-            <span>Adicionar ativo</span>
+            + Seção
           </button>
         )}
         {catalog === null && !catalogError && (
@@ -639,7 +1098,10 @@ export default function StockChart() {
         <AddAssetDialog
           isAdding={isAdding}
           error={dialogError}
-          onClose={() => setIsAddOpen(false)}
+          onClose={() => {
+            setIsAddOpen(false);
+            setAddAssetSectionId(null);
+          }}
           onAdd={addAsset}
         />
       )}

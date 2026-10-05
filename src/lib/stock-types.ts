@@ -6,6 +6,17 @@ export type PricePoint = {
 export type StockCatalogEntry = {
   symbol: string;
   msnId: string;
+  sectionId: string;
+};
+
+export type StockSection = {
+  id: string;
+  name: string;
+};
+
+export type StockCatalog = {
+  sections: StockSection[];
+  entries: StockCatalogEntry[];
 };
 
 export type StockChartData = {
