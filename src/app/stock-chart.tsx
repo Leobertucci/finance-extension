@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { getStockChart, resolveMsnId } from "@/lib/finance-client";
 import { loadStockCatalog, saveStockCatalog } from "@/lib/stock-catalog";
 import type {
+  DragEvent,
   FormEvent,
 } from "react";
 import type {
@@ -140,6 +141,7 @@ function PriceChart({
             width="40"
             height="20"
             rx="5"
+            fillOpacity={0.7}
           />
           <text x={right - 20} y={baselineY + 4} textAnchor="middle">
             {priceNumber.format(baseline)}
@@ -180,9 +182,21 @@ function PriceChart({
 function StockCard({
   entry,
   onRemove,
+  draggable,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  onDragEnd,
+  isDragOver,
 }: {
   entry: StockCatalogEntry;
   onRemove: (msnId: string) => void;
+  draggable: boolean;
+  onDragStart: (event: DragEvent<HTMLElement>) => void;
+  onDragOver: (event: DragEvent<HTMLElement>) => void;
+  onDrop: (event: DragEvent<HTMLElement>) => void;
+  onDragEnd: () => void;
+  isDragOver: boolean;
 }) {
   const [data, setData] = useState<StockChartData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -228,16 +242,22 @@ function StockCard({
   const changePercent = baseline === 0 ? 0 : (change / baseline) * 100;
   const isPositive = change >= 0;
   const sign = isPositive ? "+" : "−";
+  const msnUrl = `https://www.msn.com/pt-br/dinheiro/stockdetails/fi-${encodeURIComponent(entry.msnId)}?ocid=msedgntp&id=${encodeURIComponent(entry.msnId)}`;
 
   return (
     <section
-      className="stock-card"
+      className={`stock-card${isDragOver ? " drag-over" : ""}`}
       aria-labelledby={`stock-title-${entry.msnId}`}
       aria-busy={isLoading}
+      draggable={draggable}
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      onDragEnd={onDragEnd}
     >
       <div className="stock-header">
         <h2 id={`stock-title-${entry.msnId}`}>
-          {data ? `${data.shortName} · ${data.symbol}` : entry.symbol}
+          {data ? `${data.symbol} - ${data.displayName}` : entry.symbol}
         </h2>
         <button
           className="remove-card"
@@ -284,11 +304,20 @@ function StockCard({
       )}
 
       {data && lastPoint && !error && (
-        <PriceChart
-          data={data}
-          baseline={baseline}
-          isPositive={isPositive}
-        />
+        <a
+          className="chart-link"
+          href={msnUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label={`Abrir ${data.symbol} no MSN Finance em uma nova aba`}
+          title="Abrir no MSN Finance"
+        >
+          <PriceChart
+            data={data}
+            baseline={baseline}
+            isPositive={isPositive}
+          />
+        </a>
       )}
     </section>
   );
@@ -364,7 +393,7 @@ function AddAssetDialog({
             className="asset-input"
             value={value}
             onChange={(event) => setValue(event.target.value)}
-            placeholder={mode === "symbol" ? "Ex.: ROXO34" : "Ex.: calgcw"}
+            placeholder={mode === "symbol" ? "Ex.: BOVA11" : "Ex.: bgmb3m"}
             autoComplete="off"
             required
             maxLength={80}
@@ -396,11 +425,13 @@ function AddAssetDialog({
 
 export default function StockChart() {
   const [catalog, setCatalog] = useState<StockCatalogEntry[] | null>(null);
+  const [dragOverMsnId, setDragOverMsnId] = useState<string | null>(null);
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [isAdding, setIsAdding] = useState(false);
   const [dialogError, setDialogError] = useState<string | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
+  const draggedMsnId = useRef<string | null>(null);
 
   useEffect(() => {
     let isActive = true;
@@ -461,6 +492,44 @@ export default function StockChart() {
     if (!catalog) return;
 
     const nextCatalog = catalog.filter((entry) => entry.msnId !== msnId);
+
+    try {
+      await saveStockCatalog(nextCatalog);
+      setCatalog(nextCatalog);
+      setCatalogError(null);
+    } catch (error) {
+      setCatalogError(getErrorMessage(error));
+    }
+  }
+
+  function startDragging(event: DragEvent<HTMLElement>, msnId: string) {
+    draggedMsnId.current = msnId;
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", msnId);
+  }
+
+  function allowDrop(event: DragEvent<HTMLElement>, msnId: string) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    setDragOverMsnId(msnId);
+  }
+
+  async function dropAsset(event: DragEvent<HTMLElement>, targetMsnId: string) {
+    event.preventDefault();
+    setDragOverMsnId(null);
+
+    const sourceMsnId = draggedMsnId.current;
+    draggedMsnId.current = null;
+
+    if (!catalog || !sourceMsnId || sourceMsnId === targetMsnId) return;
+
+    const sourceIndex = catalog.findIndex((entry) => entry.msnId === sourceMsnId);
+    const targetIndex = catalog.findIndex((entry) => entry.msnId === targetMsnId);
+    if (sourceIndex < 0 || targetIndex < 0) return;
+
+    const nextCatalog = [...catalog];
+    const [movedAsset] = nextCatalog.splice(sourceIndex, 1);
+    nextCatalog.splice(targetIndex, 0, movedAsset);
 
     try {
       await saveStockCatalog(nextCatalog);
@@ -532,6 +601,15 @@ export default function StockChart() {
             key={entry.msnId}
             entry={entry}
             onRemove={(msnId) => void removeAsset(msnId)}
+            draggable
+            onDragStart={(event) => startDragging(event, entry.msnId)}
+            onDragOver={(event) => allowDrop(event, entry.msnId)}
+            onDrop={(event) => void dropAsset(event, entry.msnId)}
+            onDragEnd={() => {
+              draggedMsnId.current = null;
+              setDragOverMsnId(null);
+            }}
+            isDragOver={dragOverMsnId === entry.msnId}
           />
         ))}
         {catalog !== null && (

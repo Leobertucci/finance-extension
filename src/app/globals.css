@@ -1,11 +1,21 @@
 @import "tailwindcss";
 
+@font-face {
+  font-family: "Bree Serif";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./fonts/bree-serif-latin.woff2") format("woff2");
+}
+
 :root {
   color-scheme: light;
   --background: #f7f8fc;
   --foreground: #151a2d;
   --muted: #788097;
   --purple: #6946f5;
+  --stock-card-width: 440px;
+  --font-bree-serif: "Bree Serif";
 }
 
 @theme inline {
@@ -172,7 +182,7 @@ body:has(.dashboard.dark-mode) {
 
 .stock-card {
   width: 100%;
-  max-width: 460px;
+  max-width: var(--stock-card-width);
   margin-inline: 0;
   overflow: hidden;
   border: 1px solid #eceef5;
@@ -181,9 +191,24 @@ body:has(.dashboard.dark-mode) {
   box-shadow: 0 12px 40px rgb(31 39 73 / 5%);
 }
 
+.stock-card[draggable="true"] {
+  cursor: grab;
+}
+
+.stock-card[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+.stock-card.drag-over {
+  border-color: var(--purple);
+}
+
 .watchlist-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 460px));
+  grid-template-columns: repeat(
+    auto-fill,
+    minmax(min(100%, 320px), var(--stock-card-width))
+  );
   align-items: stretch;
   gap: 18px;
 }
@@ -300,6 +325,18 @@ body:has(.dashboard.dark-mode) {
 
 .chart-wrap {
   padding: 0 12px 0 8px;
+}
+
+.chart-link {
+  display: block;
+  color: inherit;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.chart-link:focus-visible {
+  outline: 2px solid var(--purple);
+  outline-offset: -2px;
 }
 
 .price-chart {

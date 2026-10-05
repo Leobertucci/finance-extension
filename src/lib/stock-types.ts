@@ -11,6 +11,7 @@ export type StockCatalogEntry = {
 export type StockChartData = {
   symbol: string;
   shortName: string;
+  displayName: string;
   msnId: string;
   previousClose: number | null;
   prices: PricePoint[];
@@ -25,6 +26,7 @@ export function isStockChartData(value: unknown): value is StockChartData {
     isRecord(value) &&
     typeof value.symbol === "string" &&
     typeof value.shortName === "string" &&
+    typeof value.displayName === "string" &&
     typeof value.msnId === "string" &&
     (value.previousClose === null ||
       (typeof value.previousClose === "number" &&
@@ -91,10 +93,15 @@ export function parseStockChartData(
       : typeof chart.displayName === "string" && chart.displayName
         ? chart.displayName
         : symbol;
+  const displayName =
+    typeof chart.displayName === "string" && chart.displayName
+      ? chart.displayName
+      : shortName;
 
   return {
     symbol,
     shortName,
+    displayName,
     msnId: fallbackMsnId,
     previousClose:
       typeof chart.pricePreviousClose === "number" &&
